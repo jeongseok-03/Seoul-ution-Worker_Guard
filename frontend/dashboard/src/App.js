@@ -31,6 +31,8 @@ import {
   CheckCircle,
   FileText,
   Loader,
+  Plus,
+  X,
 } from "lucide-react";
 
 // --- 디자인 테마 ---
@@ -280,7 +282,6 @@ function Login({ onLogin }) {
       });
       const data = await res.json();
       if (data.success) {
-        // access_token이 있다면 같이 저장
         onLogin({
           role: data.role,
           company: data.company,
@@ -377,10 +378,16 @@ function App() {
   const [detailLogs, setDetailLogs] = useState(null);
   const [selectedName, setSelectedName] = useState(null);
 
+  // Settings용 직무 추가 입력값
+  const [newJobName, setNewJobName] = useState("");
+  const [newJobWage, setNewJobWage] = useState(12000);
+  const [newJobIntensity, setNewJobIntensity] = useState(1.0);
+  const [newJobCert, setNewJobCert] = useState("");
+
   const isAdmin = user?.role === 1;
   const isStaffRestricted = user?.role === 2 && mode === "REGULAR";
 
-  // ✅ authHeaders를 useMemo로 감싸서 ESLint 경고 제거
+  // auth header
   const authHeaders = useMemo(
     () =>
       user?.access_token
@@ -543,12 +550,12 @@ function App() {
     setSelectedName(name);
   };
 
-  // Settings: local slider update + 서버 반영
+  // Settings: ratio 변경
   const commitRatioChange = async (job, val) => {
     await fetch(`${API_BASE}/settings/update`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ job_name: job, ratio: val }),
+      body: JSON.stringify({ job_name: job, ratio: Number(val) }),
     });
     fetchData();
   };
@@ -557,6 +564,50 @@ function App() {
     const newSettings = [...data.settings];
     newSettings[idx] = { ...newSettings[idx], ratio: Number(newVal) };
     setData({ ...data, settings: newSettings });
+  };
+
+  const handleAddJob = async () => {
+    if (!newJobName.trim()) {
+      alert("직무명을 입력해주세요.");
+      return;
+    }
+    const body = {
+      job_name: newJobName.trim(),
+      intensity: Number(newJobIntensity) || 1.0,
+      hourly_wage: Number(newJobWage) || 10000,
+      ratio: 0,
+      required_cert: newJobCert.trim() || null,
+    };
+    const res = await fetch(`${API_BASE}/settings/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      alert(json.detail || "추가 실패");
+      return;
+    }
+    setNewJobName("");
+    setNewJobWage(12000);
+    setNewJobIntensity(1.0);
+    setNewJobCert("");
+    fetchData();
+  };
+
+  const handleDeleteJob = async (job_name) => {
+    if (!window.confirm(`${job_name} 직무를 삭제할까요?`)) return;
+    const res = await fetch(`${API_BASE}/settings/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ job_name }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      alert(json.detail || "삭제 실패");
+      return;
+    }
+    fetchData();
   };
 
   // ------------------- JSX -------------------
@@ -666,9 +717,7 @@ function App() {
               {mode === "REGULAR" ? "정규직(상시)" : "일용직(단기)"} 관리 모드
             </p>
           </div>
-          <div
-            style={{ display: "flex", gap: "10px", alignItems: "center" }}
-          >
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             {loading && (
               <Loader
                 size={20}
@@ -785,11 +834,16 @@ function App() {
                             margin: "5px 0",
                           }}
                         >
-                          강도 {Math.round(w.today_int * 10) / 10} (어제:{" "}
-                          {Math.round(w.prev_int * 10) / 10})
+                          오늘 피로도{" "}
+                          {Math.round(w.today_int * 10) / 10} / 어제 피로도{" "}
+                          {Math.round(w.prev_int * 10) / 10}
                         </div>
                         <button
-                          style={{ ...styles.redBtn, width: "100%", justifyContent: "center" }}
+                          style={{
+                            ...styles.redBtn,
+                            width: "100%",
+                            justifyContent: "center",
+                          }}
                           onClick={() => alert("SMS 발송 완료")}
                         >
                           <Send size={12} /> 휴식 권고
@@ -875,6 +929,12 @@ function App() {
                   <th style={styles.th}>이름</th>
                   <th style={styles.th}>전화번호</th>
                   <th style={styles.th}>센터</th>
+                  {mode === "REGULAR" && (
+                    <>
+                      <th style={styles.th}>자격증</th>
+                      <th style={styles.th}>한달 피로도 평균</th>
+                    </>
+                  )}
                   <th style={styles.th}>관리</th>
                 </tr>
               </thead>
@@ -899,6 +959,16 @@ function App() {
                         {w.center}
                       </span>
                     </td>
+                    {mode === "REGULAR" && (
+                      <>
+                        <td style={styles.td}>{w.cert || "-"}</td>
+                        <td style={styles.td}>
+                          {w.month_fatigue != null
+                            ? (Math.round(w.month_fatigue * 10) / 10).toFixed(1)
+                            : "-"}
+                        </td>
+                      </>
+                    )}
                     <td style={styles.td}>
                       {!isStaffRestricted && (
                         <div style={{ display: "flex", gap: "8px" }}>
@@ -938,7 +1008,7 @@ function App() {
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
+                justifyContent: "spaceBetween",
                 marginBottom: "20px",
               }}
             >
@@ -1067,6 +1137,22 @@ function App() {
                 SMS 자동 배정 시뮬레이션
               </span>
             </div>
+            {mode === "DAILY" && (
+              <div
+                style={{
+                  marginBottom: "12px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  background: "#ecfeff",
+                  border: "1px solid #bae6fd",
+                  fontSize: "13px",
+                  color: theme.textSub,
+                }}
+              >
+                일용직 업무 가중치: <b>상하차 40%</b> / <b>포장 40%</b> /{" "}
+                <b>재고관리 20%</b>
+              </div>
+            )}
             <div
               style={{
                 background: "#1e293b",
@@ -1104,21 +1190,102 @@ function App() {
           <div style={styles.card}>
             <div
               style={{
-                marginBottom: "20px",
+                marginBottom: "16px",
                 display: "flex",
                 alignItems: "center",
                 gap: "8px",
+                justifyContent: "space-between",
               }}
             >
-              <Settings size={20} color={theme.primary} />
-              <span style={{ fontWeight: "700" }}>직무 가중치 설정</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Settings size={20} color={theme.primary} />
+                <span style={{ fontWeight: "700" }}>직무 가중치 설정</span>
+              </div>
             </div>
+
+            {/* 직무 추가 폼 */}
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "12px",
+                borderRadius: "12px",
+                border: `1px dashed ${theme.border}`,
+                background: "#f8fafc",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  marginBottom: "8px",
+                  fontSize: "13px",
+                  color: theme.textSub,
+                }}
+              >
+                <Plus size={16} />
+                <span>새 직무 추가</span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <input
+                  style={{ ...styles.input, flex: "1 1 120px" }}
+                  placeholder="직무명 (예: 피킹)"
+                  value={newJobName}
+                  onChange={(e) => setNewJobName(e.target.value)}
+                />
+                <input
+                  style={{ ...styles.input, width: "90px" }}
+                  type="number"
+                  placeholder="시급"
+                  value={newJobWage}
+                  onChange={(e) => setNewJobWage(e.target.value)}
+                />
+                <input
+                  style={{ ...styles.input, width: "80px" }}
+                  type="number"
+                  step="0.1"
+                  placeholder="강도"
+                  value={newJobIntensity}
+                  onChange={(e) => setNewJobIntensity(e.target.value)}
+                />
+                <input
+                  style={{ ...styles.input, flex: "1 1 120px" }}
+                  placeholder="필요 자격증 (선택)"
+                  value={newJobCert}
+                  onChange={(e) => setNewJobCert(e.target.value)}
+                />
+                <button
+                  style={{
+                    ...styles.btn,
+                    padding: "8px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  onClick={handleAddJob}
+                >
+                  <Plus size={14} />
+                  추가
+                </button>
+              </div>
+            </div>
+
             <table style={styles.table}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
                   <th style={styles.th}>직무명</th>
+                  <th style={styles.th}>강도(Intensity)</th>
+                  <th style={styles.th}>시급</th>
                   <th style={styles.th}>현재 비율 (Ratio)</th>
                   <th style={styles.th}>조정</th>
+                  <th style={styles.th}>삭제</th>
                 </tr>
               </thead>
               <tbody>
@@ -1126,6 +1293,10 @@ function App() {
                   <tr key={s.job_name}>
                     <td style={{ ...styles.td, fontWeight: "bold" }}>
                       {s.job_name}
+                    </td>
+                    <td style={styles.td}>{s.intensity}</td>
+                    <td style={styles.td}>
+                      {(s.hourly_wage || 0).toLocaleString()}원
                     </td>
                     <td
                       style={{
@@ -1165,6 +1336,18 @@ function App() {
                         readOnly
                       />
                     </td>
+                    <td style={styles.td}>
+                      <button
+                        style={{
+                          ...styles.btnIcon,
+                          background: "#fee2e2",
+                          color: theme.danger,
+                        }}
+                        onClick={() => handleDeleteJob(s.job_name)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1172,7 +1355,7 @@ function App() {
           </div>
         )}
 
-        {/* Modals */}
+        {/* Detail Modal */}
         {selectedName && (
           <div style={styles.modal}>
             <div style={styles.modalContent}>
@@ -1224,6 +1407,7 @@ function App() {
           </div>
         )}
 
+        {/* Edit Log Modal */}
         {editLog && (
           <div style={styles.modal}>
             <div
@@ -1305,6 +1489,7 @@ function App() {
           </div>
         )}
 
+        {/* Edit Worker Modal */}
         {editWorker && (
           <div style={styles.modal}>
             <div

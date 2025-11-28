@@ -23,14 +23,13 @@ from jose import JWTError, jwt  # JWT 토큰 발급/검증
 
 DB_PATH = os.getenv("DB_PATH", "worker_data_v22.db")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")  # 실제 서비스에선 반드시 환경변수로
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")  # 실제 서비스에선 환경변수 필수
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1시간
 
 PAYROLL_DELAY_DAYS = 3   # 일용직 급여 지급 지연 일수 (D-3)
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB
 
-# 개발/해커톤용: 실제 서비스에선 허용 도메인만 명시
 ORIGINS = [
     "http://localhost:3000",
 ]
@@ -147,12 +146,12 @@ def init_db():
         c.execute("SELECT count(*) FROM job_settings")
         if c.fetchone()[0] == 0:
             jobs = [
-                ('상하차', 1.9, 15000, 20, None),
-                ('포장', 1.0, 12000, 20, None),
+                ('상하차',   1.9, 15000, 20, None),
+                ('포장',     1.0, 12000, 20, None),
                 ('재고관리', 0.8, 13000, 20, None),
                 ('특수용접', 1.7, 25000, 10, '용접기능사'),
                 ('전기설비', 1.5, 22000, 10, '전기기사'),
-                ('지게차', 1.4, 18000, 20, '지게차면허')
+                ('지게차',   1.4, 18000, 20, '지게차면허')
             ]
             c.executemany("INSERT INTO job_settings VALUES (?,?,?,?,?)", jobs)
 
@@ -190,6 +189,16 @@ class TokenData(BaseModel):
     company_code: str
     role: int
     company_name: str
+
+class JobAdd(BaseModel):
+    job_name: str
+    intensity: float = 1.0
+    hourly_wage: int = 10000
+    ratio: int = 0
+    required_cert: Optional[str] = None
+
+class JobDelete(BaseModel):
+    job_name: str
 
 # ==============================
 # 인증/인가 의존성
@@ -333,7 +342,7 @@ async def login(req: LoginReq, request: Request):
 async def upload_workers(
     type: str = Form(...),
     file: UploadFile = File(...),
-    user: TokenData = Depends(get_current_user)  # 인증 필요
+    user: TokenData = Depends(get_current_user)
 ):
     content = await file.read()
     required_cols = ['이름', '전화번호', '소속센터', '고정교대조', '자격증']
@@ -399,7 +408,7 @@ async def upload_workers(
 async def upload_logs(
     type: str = Form(...),
     file: UploadFile = File(...),
-    user: TokenData = Depends(get_current_user)  # 인증 필요
+    user: TokenData = Depends(get_current_user)
 ):
     content = await file.read()
     required_cols = ['날짜', '이름', '근무지', '직무', '시간대', '근무시간']
@@ -444,7 +453,7 @@ async def upload_logs(
     return {"msg": "기록 업로드 완료"}
 
 # ==============================
-# API: 다운로드 (인증 필요)
+# API: 다운로드
 # ==============================
 
 @app.get("/download")
@@ -486,6 +495,10 @@ async def get_workers_list(
     date: Optional[str] = None,
     user: TokenData = Depends(get_current_user)
 ):
+    """
+    REGULAR: 최근 월 기준으로 'month_fatigue'(평균 intensity) 함께 반환
+    DAILY  : 기존 로직 그대로 (date=valid_date)
+    """
     conn = get_db()
     conn.row_factory = sqlite3.Row
     try:
@@ -495,9 +508,39 @@ async def get_workers_list(
                 "SELECT * FROM workers WHERE worker_type='DAILY' AND valid_date=?",
                 (date,)
             )
+            return [dict(r) for r in c.fetchall()]
+        elif type == 'REGULAR':
+            # 최근 월 구하기
+            c.execute("SELECT MAX(work_date) FROM work_logs WHERE worker_type='REGULAR'")
+            row = c.fetchone()
+            last_date = row[0] if row else None
+            if not last_date:
+                c.execute("SELECT * FROM workers WHERE worker_type='REGULAR'")
+                return [dict(r) for r in c.fetchall()]
+
+            last_month = last_date[:7]  # "YYYY-MM"
+            query = """
+                SELECT
+                    w.*,
+                    AVG(
+                        CASE
+                            WHEN strftime('%Y-%m', l.work_date) = ?
+                            THEN l.intensity
+                            ELSE NULL
+                        END
+                    ) AS month_fatigue
+                FROM workers w
+                LEFT JOIN work_logs l
+                  ON w.name = l.name
+                 AND l.worker_type = 'REGULAR'
+                WHERE w.worker_type = 'REGULAR'
+                GROUP BY w.id
+            """
+            c.execute(query, (last_month,))
+            return [dict(r) for r in c.fetchall()]
         else:
             c.execute("SELECT * FROM workers WHERE worker_type=?", (type,))
-        return [dict(r) for r in c.fetchall()]
+            return [dict(r) for r in c.fetchall()]
     finally:
         conn.close()
 
@@ -694,7 +737,7 @@ async def get_risk(
             FROM workers w
             JOIN work_logs l ON w.name = l.name
             WHERE l.work_date IN (?, ?)
-              AND w.worker_type=?
+              AND w.worker_type=? 
               AND l.worker_type=?
             GROUP BY w.name
             HAVING today_int >= 1.5 AND prev_int >= 1.5
@@ -753,7 +796,7 @@ async def get_analytics(
 async def get_sms(
     center: str,
     type: str,
-    user: TokenData = Depends(admin_required)  # 관리자만
+    user: TokenData = Depends(admin_required)
 ):
     conn = get_db()
     conn.row_factory = sqlite3.Row
@@ -764,14 +807,24 @@ async def get_sms(
             (center, type)
         )
         workers = c.fetchall()
-        c.execute("SELECT job_name, ratio, required_cert FROM job_settings")
-        settings = c.fetchall()
 
         pool = []
-        for r in settings:
-            if type == 'DAILY' and r['required_cert']:
-                continue
-            pool.extend([r['job_name']] * r['ratio'])
+
+        if type == 'DAILY':
+            # 일용직 업무 가중치: 상하차 40%, 포장 40%, 재고관리 20%
+            daily_weights = {
+                '상하차': 40,
+                '포장': 40,
+                '재고관리': 20
+            }
+            for job_name, ratio in daily_weights.items():
+                pool.extend([job_name] * ratio)
+        else:
+            # 정규직 배분은 job_settings의 ratio 사용
+            c.execute("SELECT job_name, ratio FROM job_settings")
+            settings = c.fetchall()
+            for r in settings:
+                pool.extend([r['job_name']] * r['ratio'])
 
         import random
         res = []
@@ -817,7 +870,40 @@ async def update_s(
         conn.close()
     return {"msg": "ok"}
 
-# 헬스체크용 엔드포인트 (인증 없이)
+@app.post("/settings/add")
+async def add_job_setting(
+    job: JobAdd,
+    user: TokenData = Depends(admin_required)
+):
+    conn = get_db()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO job_settings (job_name, intensity, hourly_wage, ratio, required_cert) VALUES (?,?,?,?,?)",
+            (job.job_name, job.intensity, job.hourly_wage, job.ratio, job.required_cert)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="이미 존재하는 직무명입니다.")
+    finally:
+        conn.close()
+    return {"msg": "추가 완료"}
+
+@app.post("/settings/delete")
+async def delete_job_setting(
+    job: JobDelete,
+    user: TokenData = Depends(admin_required)
+):
+    conn = get_db()
+    try:
+        c = conn.cursor()
+        c.execute("DELETE FROM job_settings WHERE job_name=?", (job.job_name,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"msg": "삭제 완료"}
+
+# 헬스체크
 @app.get("/health")
 def health():
     return {"status": "ok"}
