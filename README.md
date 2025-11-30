@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🛡️ WorkerGuard (워커가드)
 
 ---
@@ -61,4 +60,4 @@ _Seoul-ution Hackathon – Team **WorkerGuard**_
 =======
 # Seoul-ution-Worker_Guard
 2025 Hackathon | WorkGuard by team 컴평 
->>>>>>> 3449ca7d4f317442ab0c499c42dc39a56060c155
+
