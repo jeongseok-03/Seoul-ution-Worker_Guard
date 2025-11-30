@@ -60,4 +60,3 @@ _Seoul-ution Hackathon – Team **WorkerGuard**_
 =======
 # Seoul-ution-Worker_Guard
 2025 Hackathon | WorkGuard by team 컴평 
-
