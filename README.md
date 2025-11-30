@@ -56,7 +56,5 @@ WorkerGuard는 물류센터에서 자주 발생하는 **엑셀 기반 인력 관
 
 ---
 
-_Seoul-ution Hackathon – Team **WorkerGuard**_
-=======
 # Seoul-ution-Worker_Guard
-2025 Hackathon | WorkGuard by team 컴평 
+2025 Hackathon | WorkGuard by team 컴평- 정석
