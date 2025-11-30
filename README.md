@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🛡️ WorkerGuard (워커가드)
 
 ---
@@ -57,3 +58,7 @@ WorkerGuard는 물류센터에서 자주 발생하는 **엑셀 기반 인력 관
 ---
 
 _Seoul-ution Hackathon – Team **WorkerGuard**_
+=======
+# Seoul-ution-Worker_Guard
+2025 Hackathon | WorkGuard by team 컴평 
+>>>>>>> 3449ca7d4f317442ab0c499c42dc39a56060c155
